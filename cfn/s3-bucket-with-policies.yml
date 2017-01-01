@@ -1,0 +1,104 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Create an S3 bucket, as well as r/o and r/w policies for it, and associate
+  them with roles.
+
+Parameters:
+  BucketName:
+    Description: A name for the bucket.
+    Type: String
+
+  ReadOnlyRoles:
+    Description: >-
+      (Optional) Comma separated list of role ARNs to attach the R/O policy to.
+    Type: CommaDelimitedList
+    Default: ""
+
+  ReadWriteRoles:
+    Description: >-
+      (Optional) Comma separated list of role ARNs to attach the Read/Write policy to.
+    Type: CommaDelimitedList
+    Default: ""
+
+  FullAccessRoles:
+    Description: >-
+      (Optional) Comma separated list of role ARNs to attach the Full Access policy to.
+    Type: CommaDelimitedList
+    Default: ""
+
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: {"Ref": BucketName}
+
+
+  BucketReadOnlyPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: {"Fn::Sub": "${AWS::StackName}_${BucketName}_ReadOnly"}
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:GetBucketLocation
+              - s3:ListBucket
+              - s3:ListBucketVersions
+            Effect: Allow
+            Resource:
+              - Ref: Bucket
+
+  BucketReadWritePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: {"Fn::Sub": "${AWS::StackName}_${BucketName}_ReadWrite"}
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:GetBucketLocation
+              - s3:ListBucket
+              - s3:ListBucketVersions
+              - s3:PutObject
+              - s3:DeleteObject
+            Effect: Allow
+            Resource:
+              - Ref: Bucket
+
+  BucketFullAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: {"Fn::Sub": "${AWS::StackName}_${BucketName}_FullAccess"}
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Action:
+              - s3:*
+            Effect: Allow
+            Resource:
+              - Ref: Bucket
+
+
+Outputs:
+  BucketFullAccessPolicyName:
+    Description: Name of the full access policy, for use in IAM roles.
+    Value:
+      Ref: "BucketFullAccessPolicy"
+  BucketReadOnlyPolicyName:
+    Description: Name of the read-only access policy, for use in IAM roles.
+    Value:
+      Ref: "BucketReadOnlyPolicy"
+  BucketReadWritePolicyName:
+    Description: Name of the read/write access policy, for use in IAM roles.
+    Value:
+      Ref: "BucketReadWritePolicy"

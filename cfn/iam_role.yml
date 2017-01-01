@@ -1,0 +1,61 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Create an IAM role, optionally attaching Managed Policies
+
+Parameters:
+  PolicyARNs:
+    Description: >-
+      (Optional) Comma delimited list of policy ARNs to attach to this role
+    Type: CommaDelimitedList
+    Default: ""
+
+  AssumeRoleService:
+    Description: >-
+      (Optional) AWS service URL prefix. Defaults to "lambda". "ec2" is another valid one.
+    Type: String
+    Default: "lambda"
+
+Conditions:
+  PolicyARNs:
+    Fn::Not:
+      - Fn::Equals:
+        - Fn::Select:
+          - 0
+          - Ref: PolicyARNs
+        - ""
+
+  AssumeRoleService:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AssumeRoleService
+          - ""
+
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - "Fn::If":
+          - PolicyARNs
+          - !Ref PolicyARNs
+          - !Ref AWS::NoValue
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: {"Fn::If": ["AssumeRoleService", {"Fn::Sub": "${AssumeRoleService}.amazonaws.com"}, "lambda.amazonaws.com"]}
+          Action: sts:AssumeRole
+
+
+Outputs:
+  RoleARN:
+    Description: IAM Role ARN
+    Value: {"Fn::GetAtt": Role.Arn}
+  RoleName:
+    Description: IAM Role Name (since it's autogen)
+    Value:
+      !Ref Role
