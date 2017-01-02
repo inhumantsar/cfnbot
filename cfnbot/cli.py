@@ -69,10 +69,8 @@ def deploy(specfile, stackset_name):
         sys.exit(1)
 
     r = ss.deploy()
-    if r == 0:
+    if not r:
         logger.error("The deploy process reported errors. Please check the logs or the AWS console.")
-    if r < 1 and r > 0:
-        logger.warning("{}% of stacks failed to deploy properly. Please check the logs or the AWS console.".format(int((1.0-r)*100)))
         sys.exit(1)
 
     logger.info('Completed without error.')

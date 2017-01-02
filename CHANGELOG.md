@@ -1,4 +1,7 @@
-## 1.0.0a
+## 1.0.0a1
+- Now fails on bad deploy instead of moving on.
+
+## 1.0.0a0
 - Added delete and stack output.
 - Cleaned up the debug and info level logger outputs.
 

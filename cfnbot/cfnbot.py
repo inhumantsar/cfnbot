@@ -304,13 +304,17 @@ class StackSet:
 
     def deploy(self):
         '''Creates or Updates all stacks in the stackset. Returns (successes/total)'''
-        results = [s.deploy(self) for s in self.stacks]
-        return float(len([i for i in results if i])) / float(len(results))
+        for s in self.stacks:
+            if not s.deploy(self):
+                return False
+        return True
 
     def delete(self):
         '''Burns all stacks in the stackset. Returns (successes/total)'''
-        results = [s.delete() for s in self.stacks]
-        return float(len([i for i in results if i])) / float(len(results))
+        r = None
+        for s in self.stacks:
+            r.append(s.delete(self))
+        return float(len([i for i in r if i])) / float(len(r))
 
     def get_output(self, value):
         '''
