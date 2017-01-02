@@ -48,6 +48,7 @@ def is_over_50kb(path):
     if not os.path.isfile(path):
         raise Exception('Path specified does not lead to a valid file: {}'.format(path))
     if os.path.getsize(path) > 51200:
+        logger.debug('File is over the AWS limit of 51,200 bytes.')
         return True
     return False
 
@@ -55,20 +56,16 @@ def stack_exists(stackname):
     '''Returns true if a stack exists, false if it doesn't, barfs if things explode.'''
     try:
         cfn.describe_stacks(StackName=stackname)
-        logger.info('No cfn kaboom means the stack exists.')
+        logger.debug('{} already exists.'.format(stackname))
         return True
     except Exception as e:
-        logger.info(e)
-        logger.info('cfn kaboomed, stack does not already exist.')
+        # remember to raise on actual errors
+        if 'Error' not in e.response.keys():
+            raise(e)
+        if e.response['Error']['Message'] != 'Stack with id {} does not exist'.format(stackname):
+            raise(e)
+        logger.debug("describe_stacks sez that the stack doesn't exist.")
         return False
-    # except Exception as e:
-    #     logger.error('cfn kaboomed in a bad way. raising exception...')
-    #     raise(e)
-    else:
-        # ??? fuck it.
-        if random.randrange(0,1,0.1) > .5:
-            return True # heads
-        return False # tails
 
 ### helpers
 def clean_path(path):
@@ -87,17 +84,40 @@ def upload_template(path, bucket):
         ExpiresIn=120
     )
 
+def maybe_log_an_error(e):
+    '''log an error, maybe'''
+    try:
+        logger.error(e.response['Error']['Message'])
+        return e.response['Error']['Message']
+    except:
+        return None
+
+def _describe_stacks(n):
+    try:
+        stacks = cfn.describe_stacks(StackName=n)['Stacks']
+    except Exception as e:
+        logger.error('describe_stack failed while looking for outputs.')
+        maybe_log_an_error(e)
+        return None
+
+    if len(stacks) > 1 or len(stacks) == 0:
+        logger.error('describe_stack returned too many stacks. i don\'t know what to do with all these.')
+        raise Exception('describe_stack returned too many stacks')
+
+    return stacks
+
+def _waiter(waiter_status, stackname):
+    try:
+        waiter = cfn.get_waiter(waiter_status)
+        waiter.wait(StackName=stackname)
+        logger.debug('Success! {} obtained.'.format(waiter_status))
+    except Exception as e:
+        logger.debug("The {} waiter reported an error.".format(waiter_status))
+        return False
+    return True
+
 
 ### the meat
-class Outputs:
-    def __init__(self): pass
-    def get(self, k): return getattr(self, k, None)
-    def add(self, k, v):
-        if getattr(self, k, None):
-            raise Exception('Output {} already registered with this stack.'.format(k))
-        setattr(self, k, v)
-
-
 class Stack:
     def __init__(self, name, template_path, template_bucket=None, parameters=None, output_checks=None, tags=None, settings=None):
         self.name = name
@@ -105,48 +125,137 @@ class Stack:
         self.template_bucket = template_bucket
         self.parameters = parameters if parameters else {}
         self.output_checks = output_checks if output_checks else []
-        self.outputs = Outputs()
         self.tags = tags if tags else []
         self.settings = settings if settings else {}
-        self.status = None
+        self._status = None
+        self._outputs = None
+
+    @property
+    def status(self):
+        if self._status:
+            return self._status
+
+        stacks = _describe_stacks(self.name)
+        if not stacks:
+            self._status = None
+
+        s = stacks[0]
+        if 'StackStatus' not in s.keys():
+            logger.warning("describe_stacks didn't return a StackStatus, but also didn't fail.")
+            self._status = None
+        else:
+            self._status = s['StackStatus']
+
+        return self._status
+
+
+    @property
+    def outputs(self):
+        if not self.output_checks or len(self.output_checks) == 0:
+            logger.debug('No output_checks specified.')
+            return []
+
+        if self._outputs:
+            return self._outputs
+
+        stacks = _describe_stacks(self.name)
+        if not stacks:
+            logger.warning('describe_stacks returned no stacks at all.')
+            return None
+
+        s = stacks[0]
+        if 'Outputs' not in s.keys():
+            logger.error('No Outputs section found in the stack output. Details in debug output.')
+            logger.debug(s)
+            return None
+
+        self._outputs = {i['OutputKey']: i['OutputValue'] for i in s['Outputs']}
+        return self._outputs
+
+    def refresh_status(self,outputs=True,Status=True):
+        if status and self._status:
+            logger.debug('refreshing status...')
+            o = copy(self._status)
+            self._status = None
+            return self.status
+
+    def refresh_outputs(self,outputs=True,Status=True):
+        if outputs and self._outputs:
+            logger.debug('refreshing outputs...')
+            o = copy(self._outputs)
+            self._outputs = None
+            return self.outputs
+
+    def delete(self):
+        '''Burn it to the ground. Returns True/False.'''
+        if not stack_exists(self.name):
+            logger.debug("stack_exists reports that {} doesn't exist. Skipping delete.".format(self.name))
+            return True
+
+        try:
+            cfn.delete_stack(StackName=self.name)
+            waiter_status='stack_delete_complete'
+        except Exception as e:
+            logger.error('delete_stack failed on {}'.format(self.name))
+            maybe_log_an_error(e)
+            return False
+
+        return _waiter(waiter_status, self.name)
+
 
     def deploy(self,stackset=None):
+        '''
+        Perform a Create or an Update on the stack. If a stackset is provided, its
+        bits will be incorporated automagically. Returns True/False.
+        '''
         # adopt the global settings as needed...
-        self.name = "{}-{}".format(stackset.name, self.name) if stackset else self.name
-        if stackset and stackset.template_bucket and not self.template_bucket:
-            self.template_bucket = stackset.template_bucket
+        if stackset:
+            if stackset.name != "Default":
+                self.name = "{}-{}".format(stackset.name, self.name)
+                logger.info('Stack name updated to {}'.format(self.name))
+            if stackset.template_bucket and not self.template_bucket:
+                self.template_bucket = stackset.template_bucket
+                logger.debug('Inherited template_bucket: {}'.format(self.template_bucket))
 
         # fetch parameter outputs
         if stackset:
             for k,v in self.parameters.items():
                 if v.startswith('cfnbotOutputs'):
-                        v = stackset.get_output(v)
+                    logger.debug('output reference found, checking stackset for {}.'.format(v))
+                    o = stackset.get_output(v)
+                    if o:
+                        logger.debug('value for {} found: {}'.format(v,o))
+                        self.parameters[k] = o
+                        logger.debug('Parameter "{}" updated.'.format(k))
 
         # create or update
         if stack_exists(self.name):
+            waiter_status = None
             try:
                 cfn.update_stack(**self.generate_cfn_args())
+                logger.info('Updating {}...'.format(self.name))
                 waiter_status = 'stack_update_complete'
             except botocore.exceptions.ClientError as e:
                 if e.response['Error']['Message'] != "No updates are to be performed.":
-                    raise(e)
+                    maybe_log_an_error(e)
                 logger.info("No updates required for {}".format(self.name))
-                waiter_status = None
+                return True
             except Exception as e:
-                logger.error('create_stack kaboomed.')
-                raise(e)
+                logger.error('update_stack failed.')
+                maybe_log_an_error(e)
+                return False
         else:
             try:
                 cfn.create_stack(**self.generate_cfn_args())
+                logger.info('Creating {}...'.format(self.name))
                 waiter_status = 'stack_create_complete'
             except Exception as e:
-                logger.error('create_stack kaboomed.')
-                raise(e)
+                logger.error('create_stack failed! hopefully for good reasons.')
+                maybe_log_an_error(e)
+                return False
 
         # wait for status
-        if waiter_status:
-            waiter = cfn.get_waiter(waiter_status)
-            waiter.wait(StackName=self.name)
+        return _waiter(waiter_status, self.name)
 
     def generate_cfn_args(self):
         '''CloudFormation API arguments for a stack.'''
@@ -155,11 +264,11 @@ class Stack:
 
         # check template size, upload if necessary
         if is_over_50kb(self.template_path):
-            logger.info('{} is larger than 51,200 bytes, uploading to S3...')
+            logger.warning('{} is larger than 51,200 bytes, uploading to S3...')
             if not self.template_bucket:
                 raise Exception('{} cannot be uploaded to S3 because a TemplateBucket was not specified')
             args['TemplateURL'] = upload_template(self.template_path, self.template_bucket)
-            logger.info('Template uploaded. Presigned url valid for 120s: {}'.format(args['TemplateURL']))
+            logger.debug('Template uploaded. Presigned url valid for 120s: {}'.format(args['TemplateURL']))
         else:
             with open(self.template_path,'r') as f:
                 args['TemplateBody'] = f.read()
@@ -194,12 +303,14 @@ class StackSet:
         self.stacks = stacks if stacks else []
 
     def deploy(self):
-        '''Creates or Updates all stacks in the stackset'''
-        cfnargs = []
-        for s in self.stacks:
-            # update where necessary
-            s.deploy(self)
-        return cfnargs
+        '''Creates or Updates all stacks in the stackset. Returns (successes/total)'''
+        results = [s.deploy(self) for s in self.stacks]
+        return float(len([i for i in results if i])) / float(len(results))
+
+    def delete(self):
+        '''Burns all stacks in the stackset. Returns (successes/total)'''
+        results = [s.delete() for s in self.stacks]
+        return float(len([i for i in results if i])) / float(len(results))
 
     def get_output(self, value):
         '''
@@ -207,10 +318,12 @@ class StackSet:
         and returns it if it does so properly.
         '''
         _, stackname, key = value.split('.')
+        logger.debug('Searching {} stacks for {}.{}'.format(len(self.stacks), stackname, key))
         for s in self.stacks:
             if s.name == stackname:
-                r = s.outputs.get(key)
-                if r: return r
+                if s.outputs and key in s.outputs.keys():
+                    logger.debug('Found output reference: {}'.format(s.outputs[key]))
+                    return s.outputs[key]
 
         # raise if not found, because we don't provide defaults to output refs
         raise Exception('Unable to find an output named "{}" in a stack named {}'.format(key, stackname))

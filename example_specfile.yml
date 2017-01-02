@@ -1,4 +1,6 @@
 ---
+GlobalTags: &GlobalTags       # this isn't actually used in cfnbot, it's just a YAML anchor
+  globaltagkey: globaltagvalue
 
 Dev: # used as a prefix for StackName, separated by a hyphen
   Stacks:
@@ -6,16 +8,14 @@ Dev: # used as a prefix for StackName, separated by a hyphen
       TemplatePath: cfn/iam_role_dev.yml
 Default:
   TemplateBucket: cfnbucket     # cfnbot will upload templates to this bucket if > 50k
-  GlobalTags: &GlobalTags       # this isn't actually used in cfnbot, it's just a YAML anchor
-    globaltagkey: globaltagvalue
   Stacks:
     -
       StackName: SomeAppBucketLambdaRole    # required
       TemplatePath: cfn/iam_role.yml        # required
       Parameters:
         AssumeRoleService: lambda
-      OutputChecks: # add these to outputs, consider the stack a failure if any don't exist
-        - RoleARN
+      OutputChecks:         # add these to outputs, consider the stack a failure
+        - RoleARN           # if any don't exist. not supported yet.
       Tags:
         <<: *GlobalTags
         localtagkey: localtagval1
@@ -24,11 +24,11 @@ Default:
     -
       StackName: SomeAppBucket
       TemplatePath: cfn/s3-bucket-with-policies.yml
-      TemplateBucket: cfnbucket2           # could put this here too.
+      TemplateBucket: cfnbucket2            # could put this here too.
       # TemplateURL: s3://... https://...   # not supported, it'd be nice though eh?
       Parameters:
         BucketName: somebucket
-        ReadWriteRoles: somevalue # cfnbotOutputs.SomeAppBucketRole.RoleARN # magic
+        ReadWriteRoles: cfnbotOutputs.SomeAppBucketLambdaRole.RoleARN # magic
       Tags:
         <<: *GlobalTags
         localtagkey: localtagval2

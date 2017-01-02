@@ -9,6 +9,7 @@ from beeprint import pp
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+logging.getLogger('botocore').setLevel(logging.WARNING) # too much noise.
 ch = logging.StreamHandler(stream=sys.stdout)
 logger.addHandler(ch)
 # sys.tracebacklimit = 0 this is ignored these days. probably because they
@@ -55,12 +56,50 @@ def cli(debug):
     if debug:
         click.echo('Debug mode is on')
         logger.setLevel(logging.DEBUG)
+        logging.getLogger('botocore').setLevel(logging.CRITICAL) # too much noise.
 
 @cli.command()
 @click.argument('specfile', type=click.File())
 @click.option('-s', '--stackset', 'stackset_name', type=click.STRING, default=None, help=HELP['stackset'])
 def deploy(specfile, stackset_name):
     '''Creates or Updates a set of CloudFormation stacks as defined in the specfile'''
+    ss = parse_specfile(specfile, stackset_name)
+
+    if not ss:
+        sys.exit(1)
+
+    r = ss.deploy()
+    if r == 0:
+        logger.error("The deploy process reported errors. Please check the logs or the AWS console.")
+    if r < 1 and r > 0:
+        logger.warning("{}% of stacks failed to deploy properly. Please check the logs or the AWS console.".format(int((1.0-r)*100)))
+        sys.exit(1)
+
+    logger.info('Completed without error.')
+    sys.exit(0)
+
+@cli.command()
+@click.argument('specfile', type=click.File())
+@click.option('-s', '--stackset', 'stackset_name', type=click.STRING, default=None, help=HELP['stackset'])
+def delete(specfile, stackset_name):
+    '''Deletes a set of CloudFormation stacks as defined in the specfile'''
+    ss = parse_specfile(specfile, stackset_name)
+
+    if not ss:
+        sys.exit(1)
+
+    r = ss.delete()
+    if r == 0:
+        logger.error("The delete process reported errors. Please check the logs or the AWS console.")
+    if r < 1 and r > 0:
+        logger.warning("{}% of stacks failed to delete properly. Please check the logs or the AWS console.".format(int((1.0-r)*100)))
+        sys.exit(1)
+
+    logger.info('Completed without error.')
+    sys.exit(0)
+
+### parsers
+def parse_specfile(specfile, stackset_name):
     try:
         spec = yaml.load(specfile.read())
     except Exception as e:
@@ -69,29 +108,26 @@ def deploy(specfile, stackset_name):
         sys.exit(1)
 
     ss = None
-    if is_one_stack(spec):
-        ss = StackSet(stacks=[{list(spec.keys())[0]: parse_stack(spec)}])
-    elif is_multiple_stacks(spec):
-        ss = StackSet(stacks=[{k: parse_stack(spec[k])} for k in list(spec.keys())])
-    elif is_n_stacksets:
+    if is_n_stacksets(spec):
         if type(stackset_name) is str and stackset_name not in list(spec.keys()):
             logger.error('{} not found in spec.keys(): {}'.format(stackset_name, spec.keys()))
-            sys.exit(1)
+            return None
         ssn = stackset_name if stackset_name else StackSet().name
         ss = parse_stackset(spec[ssn],ssn)
         ss.stacks = [parse_stack(s, ss.name if ss.name != 'Default' else None) for s in spec[ss.name]['Stacks']]
+    elif is_one_stack(spec):
+        ss = StackSet(stacks=[{list(spec.keys())[0]: parse_stack(spec)}])
+    elif is_multiple_stacks(spec):
+        ss = StackSet(stacks=[{k: parse_stack(spec[k])} for k in list(spec.keys())])
 
     if not ss:
         logger.error("The YAML document was parsed properly, but did not appear to be in any known format.")
-        sys.exit(1)
+        return None
 
-    logger.debug('Finished parsing the StackSet requested')
-    logger.debug(pp(ss))
+    logger.debug('Specfile parsed, moving on...')
+    return ss
 
-    logger.debug('Building CFN API args...')
-    logger.debug(pp(ss.deploy()))
 
-### parsers
 def parse_stackset(snip, name):
     '''Create a StackSet object out of a spec snippet'''
     ss = StackSet(name=name)

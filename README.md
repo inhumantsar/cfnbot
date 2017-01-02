@@ -2,19 +2,19 @@
 
 Make managing CloudFormation stacks a little friendlier.
 
-## Current State
+__Still very much a work in progress__
 
-Janky. Output is nasty. Debug output is basically unusable. But! It works. A bit.
-No delete yet. No stack output reading yet.
+### Install
 
-Working:
-- It will stand up multiple stacks one after another as defined in the specfile
-  and the CloudFormation templates in.
-- If run against the example_specfile from within the repo, it will stand up the
-  IAM role and fail on the bucket (because someone already owns "somebucket").
-  Note that these templates aren't exactly functional.
+    $ pip install cfnbot
 
-### Config File Formats
+### Usage
+
+    # First, write a specfile. See `example_specfile.yml` for more info.
+    $ cfnbot deploy [--debug] /path/to/specfile.yml [--stackset <name>]
+    $ cfnbot delete [--debug] /path/to/specfile.yml [--stackset <name>]
+
+### Specfile Formats
 #### Single Stack
 One top key only, which can't be "Default" or "Stacks". Must contain a TemplatePath.
 

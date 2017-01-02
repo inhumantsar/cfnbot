@@ -1,4 +1,4 @@
-FROM python:3
+FROM python:2
 MAINTAINER shaun@samsite.ca
 
 VOLUME /root/.aws
