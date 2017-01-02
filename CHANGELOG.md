@@ -1,3 +1,6 @@
+## 1.0.0a2
+- Fixed a bug in delete where I derped by coding instead of sleeping
+
 ## 1.0.0a1
 - Now fails on bad deploy instead of moving on.
 

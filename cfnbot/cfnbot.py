@@ -311,9 +311,9 @@ class StackSet:
 
     def delete(self):
         '''Burns all stacks in the stackset. Returns (successes/total)'''
-        r = None
+        r = []
         for s in self.stacks:
-            r.append(s.delete(self))
+            r.append(s.delete())
         return float(len([i for i in r if i])) / float(len(r))
 
     def get_output(self, value):

@@ -14,7 +14,7 @@ setup(
     name='cfnbot',
     version = version,
     description='Makes handling multi-stack deployments to CloudFormation a bit easier',
-    long_description=open('README.md').read(),
+    long_description=open('README.rst').read(),
     author='Shaun Martin',
     author_email='shaun@samsite.ca',
     url='https://github.com/inhumantsar/cfnbot',
