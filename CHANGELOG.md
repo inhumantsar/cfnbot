@@ -1,3 +1,6 @@
+## 1.0.0
+- Added outputs to the log. Calling this v1.
+
 ## 1.0.0a2
 - Fixed a bug in delete where I derped by coding instead of sleeping
 

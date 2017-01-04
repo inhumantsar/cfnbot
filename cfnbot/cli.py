@@ -69,7 +69,9 @@ def deploy(specfile, stackset_name):
         sys.exit(1)
 
     r = ss.deploy()
-    if not r:
+    if r:
+        logger.info('Outputs: {}'.format(ss.outputs))
+    else:
         logger.error("The deploy process reported errors. Please check the logs or the AWS console.")
         sys.exit(1)
 
