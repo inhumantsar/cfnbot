@@ -1,3 +1,7 @@
+## 1.1.0a0
+- Removed beeprint as a requirement
+- Added a Zappa deployment helper
+
 ## 1.0.0
 - Added outputs to the log. Calling this v1.
 

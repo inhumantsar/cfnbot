@@ -1,4 +1,3 @@
 boto3
 click
 PyYAML
-beeprint

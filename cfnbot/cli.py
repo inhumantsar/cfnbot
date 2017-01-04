@@ -4,8 +4,11 @@ import json
 import logging
 import click
 import sys
+from datetime import datetime
+from collections import defaultdict
+from subprocess import call
 from .cfnbot import StackSet, Stack
-from beeprint import pp
+
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -48,6 +51,7 @@ logger.addHandler(ch)
 
 HELP = {
     'stackset': 'Use a stackset other than "Default".',
+    'zappa': '(Optional) Name of the zappa environment to deploy.'
 }
 
 @click.group()
@@ -59,9 +63,10 @@ def cli(debug):
         logging.getLogger('botocore').setLevel(logging.CRITICAL) # too much noise.
 
 @cli.command()
-@click.argument('specfile', type=click.File())
+@click.argument('specfile', type=click.Path())
 @click.option('-s', '--stackset', 'stackset_name', type=click.STRING, default=None, help=HELP['stackset'])
-def deploy(specfile, stackset_name):
+@click.option('-z', '--zappa', 'zappa_env', type=click.STRING, default="", help=HELP['zappa'])
+def deploy(specfile, stackset_name, zappa_env):
     '''Creates or Updates a set of CloudFormation stacks as defined in the specfile'''
     ss = parse_specfile(specfile, stackset_name)
 
@@ -74,6 +79,10 @@ def deploy(specfile, stackset_name):
     else:
         logger.error("The deploy process reported errors. Please check the logs or the AWS console.")
         sys.exit(1)
+
+    zsfilepath = os.path.join(os.path.basename(specfile),'zappa_settings.json', zappa_env)
+    if zappa and os.path.isfile(zsfilepath):
+        deploy_zappa(zsfilepath, ss.outputs)
 
     logger.info('Completed without error.')
     sys.exit(0)
@@ -98,10 +107,84 @@ def delete(specfile, stackset_name):
     logger.info('Completed without error.')
     sys.exit(0)
 
+
+### zappa
+def deploy_zappa(zsfilepath, stackset, zappa_env):
+    logger.debug('zappa: reading settings file')
+    with open(zsfilepath, 'r') as f:
+        j = f.read()
+
+    logger.debug('zappa: parsing settings file')
+    zs = json.loads(j)
+
+    # replace refs with outputs.
+    logger.debug('zappa: replacing refs in settings file')
+    zsidx = reverse_index(zs)
+    for i in get_refs(zs):
+        for k in zsidx[i]:
+            zs[k] = stackset.get_output(i)
+            logger.debug('zappa: updated {} to {} ({})'.format(k, zs[k], i))
+
+    # make a copy of the original json file.
+    backup = "{}.orig".format(zsfilepath)
+    logger.debug('zappa: creating backup copy of the zappa_settings file.')
+    call(["cp",zsfilepath,backup])
+
+    # write a new json file with refs replaced.
+    logger.debug('zappa: writing live zappa_settings file.')
+    with open(zsfilepath,'w') as f:
+        f.write(json.dumps(zs))
+
+    # run zappa, catch all exceptions
+    logger.debug('zappa: here goes nothing...')
+    try:
+        call("zappa","deploy",zappa_env)
+    except Exception as e:
+        logger.error('zappa deploy {} failed!'.format(zappa_env))
+        logger.error(e.message)
+
+    # copy the new json file to a new name with a timestamp or stg
+    dt = datetime.now().isoformat().replace(':','').split('.')[0]
+    archivename = os.path.join(os.path.dirname(zsfilepath),'zappa_settings.{}.json'.format(dt))
+    logger.debug('zappa: archiving the live settings file to {}'.format(archivename))
+    call(["cp", zsfilepath, archivename])
+
+    # overwrite the zappa_settings.json file with the original
+    logger.debug('zappa: archiving the live settings file to {}'.format(archivename))
+    call(['mv', '-f', backup, zsfilepath])
+
+### helpers
+def get_refs(haystack,ref_prefix='cfnbotOutputs.'):
+    '''provides a list of refs present in a dict. optional string prefix.'''
+    r = []
+    if isinstance(haystack,list):
+        for v in haystack:
+            tv = type(v)
+            if isinstance(v,list) or isinstance(v,dict):
+                r += get_refs(v,ref_prefix)
+            if isinstance(v,str) and v.startswith(ref_prefix):
+                r.append(v)
+    if isinstance(haystack,dict):
+        for k,v in haystack.items():
+            tv = type(v)
+            if isinstance(v,list) or isinstance(v,dict):
+                r += get_refs(v,ref_prefix)
+            if isinstance(v,str) and v.startswith(ref_prefix):
+                r.append(v)
+    return list(set(r))
+
+def reverse_index(d):
+    '''provides a list of keys for each value found in a dict'''
+    r = defaultdict(list)
+    for k,v in d.items():
+        r[v].append(k)
+    return r
+
 ### parsers
 def parse_specfile(specfile, stackset_name):
     try:
-        spec = yaml.load(specfile.read())
+        with open(specfile,'r') as f:
+            spec = yaml.load(f.read())
     except Exception as e:
         logger.error("Couldn't read the YAML provided. Does it pass linting? Am I broken?")
         logger.debug(e.message)
